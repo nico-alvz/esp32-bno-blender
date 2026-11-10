@@ -1,37 +1,28 @@
-# ESP32 + BNO → Blender · 1.5.0 beta
+# ESP32 + BNO → Blender · 1.5.1 beta
 
 Control de orientación de objetos en Blender con ESP32 clásico y BNO055/BNO08x por USB o Bluetooth SPP. Interfaz en español.
 
 ## Estructura
 
 - `firmware/`: PlatformIO/Arduino, recuperación I²C y pruebas SH2.
-- `blender/`: complemento Blender 4.0+, pruebas y lanzadores Linux/Windows.
-- Releases: ZIP del complemento, paquetes Linux/Windows y binarios ESP32 con SHA256SUMS.
+- `blender/`: complemento instalable Blender 4.0+, dependencia incluida y pruebas.
+- Releases: ZIP único del complemento para Linux/Windows y firmware separado con SHA256SUMS.
 
 ## Hardware
 
 ESP32 DevKit V1 clásico (S2/S3/C3 no soportan el SPP requerido). Conectar GND común, SDA a GPIO21 y SCL a GPIO22. Alimentar según la especificación del módulo; las señales I²C deben ser de 3,3 V. Usar cables cortos y revisar pull-ups. El firmware detecta BNO055/BNO08x y transmite `Q,w,x,y,z\n` a 115200 baudios. Bluetooth se anuncia como `ESP32_Tracker`. El reporte BNO08x solicitado es 50 Hz; ver frecuencia efectiva en el panel.
 
-## Instalar en Blender (Linux y Windows)
+## Instalar en Blender · Linux y Windows
 
-1. Instalar Blender 4.0+ y descargar/descomprimir el complemento.
-2. Instalar pyserial en el Python de Blender. En su consola Python (Shift+F4):
+1. Descargar **ESP32-Tracker-Blender-1.5.1-beta.1.zip** de Releases. **No descomprimirlo.**
+2. Blender → Editar → Preferencias → Complementos → menú ▾ → **Instalar desde disco**. Elegir ese ZIP y activar **ESP32 IMU Tracker**.
+3. Volver a la vista 3D → tecla **N** → pestaña **ESP32**. Elegir objeto y pulsar **Conectar / Iniciar**.
 
-```python
-import bpy, pathlib, subprocess, sys
-target = str(pathlib.Path(bpy.utils.user_resource('SCRIPTS', create=True)) / 'modules')
-subprocess.check_call([sys.executable, '-m', 'ensurepip', '--user'])
-subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--target', target, 'pyserial==3.5'])
-```
+Incluye pyserial y su licencia: no requiere pip, terminal ni instalar Python. El firmware se descarga por separado y solo se graba cuando sea necesario.
 
-Reiniciar Blender. Si la distribución no incluye ensurepip, usar Blender oficial con Python incorporado.
+USB automático elige el primer adaptador USB serie. Si hay varios, elegir Personalizado. En Windows consultar el Administrador de dispositivos e introducir por ejemplo `COM3`; en Linux, `/dev/ttyUSB0` o `/dev/ttyACM0`. El controlador CP210x/CH340 de la placa y los permisos del puerto siguen siendo requisitos del sistema operativo.
 
-3. Preferencias → Complementos → instalar desde disco (menú desplegable en versiones recientes): seleccionar `blender_tracker.py` y activar. Alternativamente abrir el archivo en el editor de texto y ejecutar para esa sesión.
-4. Vista 3D → N → ESP32: seleccionar objeto, puerto y Conectar.
-
-USB automático elige el primer dispositivo USB serie; con varios dispositivos usar **Personalizado**. Linux: `/dev/ttyUSB0` o `/dev/ttyACM0`; se requieren permisos sobre el puerto (habitualmente grupo dialout, cerrar sesión tras modificar grupos). Windows: consultar Administrador de dispositivos e introducir `COM3`, por ejemplo. Instalar controlador CP210x/CH340 según la placa.
-
-Bluetooth: emparejar `ESP32_Tracker` y configurar un puerto serie SPP; Linux usa RFCOMM (habitualmente `/dev/rfcomm0`), Windows el COM saliente. BLE no funciona. Los lanzadores `open_blender.sh`/`.bat` requieren `blender` en PATH. También se puede usar la ruta completa a Blender con `--python blender_tracker.py`.
+Bluetooth: emparejar `ESP32_Tracker` y usar el COM saliente en Windows o RFCOMM en Linux. Requiere SPP clásico; BLE no funciona.
 
 ## Montaje y calibración
 

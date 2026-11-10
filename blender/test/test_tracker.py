@@ -7,9 +7,9 @@ from types import SimpleNamespace
 import bpy
 from mathutils import Quaternion, Vector
 
-spec = importlib.util.spec_from_file_location('tracker', Path(__file__).resolve().parents[1] / 'blender_tracker.py')
-t = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(t)
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from esp32_tracker import tracker as t
 t.register()
 s = bpy.context.scene.esp32_tracker
 s.target_object = bpy.data.objects['Cube']

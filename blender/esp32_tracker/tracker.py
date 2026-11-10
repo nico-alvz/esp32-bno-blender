@@ -15,7 +15,7 @@ from collections import deque
 bl_info = {
     "name": "ESP32 IMU Tracker",
     "author": "nico-alvz",
-    "version": (1, 5, 0),
+    "version": (1, 5, 1),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar (N) > ESP32 Tab",
     "description": "Controla objetos 3D en tiempo real con ESP32 + BNO08x/055",
