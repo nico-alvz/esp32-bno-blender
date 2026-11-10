@@ -32,7 +32,7 @@ La primera muestra establece la postura neutral; **Calibrar Cero (Tare)** vuelve
 - Vertical sobre celular: colocar el celular vertical, seleccionar cara hacia afuera (+Z o -Z del BNO) y centrar. Arriba se deriva de la orientación medida; no se supone +Y. Se rechaza una postura casi horizontal.
 - Personalizado: seleccionar frente y arriba perpendiculares; admite 24 orientaciones.
 
-Después de cambiar montaje/cara volver a centrar. Conversión: `M @ (Q0.inverted() @ Q) @ M.inverted()`. Sin inversiones conserva cuaterniones. Las inversiones X/Y/Z usan Euler XYZ relativos y tienen singularidad cerca de Y = ±90°. El panel muestra datos crudos, cuaternión normalizado, salida XYZ, frecuencia, paquetes válidos/inválidos y último mensaje del firmware.
+Después de cambiar montaje/cara volver a centrar. Conversión: `M @ (Q0.inverted() @ Q) @ M.inverted()`. La asignación y las inversiones trabajan directamente sobre el eje de rotación del cuaternión relativo, sin conversión a Euler ni acumulación de movimientos. Los ángulos Euler del panel son solo de visualización. El panel muestra datos crudos, cuaternión normalizado, salida XYZ, frecuencia, paquetes válidos/inválidos y último mensaje del firmware.
 
 ## Compilar y grabar firmware
 
@@ -80,3 +80,14 @@ La segunda requiere firmware compilado y compilador C (`cc`). Se prueban 24 orie
 - Orientación incorrecta: revisar montaje/cara, desactivar inversiones y volver a centrar.
 - Bluetooth: verificar SPP clásico y puerto saliente COM/RFCOMM.
 - Cortes: conservar mensajes del watchdog y revisar bus/alimentación.
+
+
+### Intercambio de controles
+
+En **Asignación e inversión → Orden** puedes elegir XYZ, XZY, YXZ, YZX, ZXY o ZYX. Cada letra indica la entrada que controla las salidas X, Y y Z, en ese orden. Por ejemplo, ZYX intercambia pitch y yaw (X/Z). Las inversiones se aplican después, a cada eje de salida. XYZ conserva el comportamiento original. El intercambio permuta las componentes del eje de rotación del cuaternión relativo y las inversiones cambian sus sentidos. Conserva el ángulo total, la rotación identidad y la equivalencia Q/-Q; no depende de la trayectoria anterior. Las permutaciones impares son una convención de control, no un cambio físico de base de coordenadas. Los ángulos Euler solo se usan para mostrar datos. Prueba manualmente las combinaciones con tu montaje y centra cuando lo necesites.
+
+Si al volver a la postura inicial el objeto no coincide, compara **Sensor respecto del cero** y **Salida respecto del cero**. Si el primero no vuelve cerca de 0°, la lectura del BNO ha cambiado respecto de la referencia. Si ambos vuelven cerca de 0° pero la apariencia difiere, revisa padres, restricciones u otras animaciones del objeto. No se ha validado físicamente esta actualización.
+
+**Invertir X** está activado por defecto en todos los montajes y puede desactivarse manualmente. Seleccionar **Horizontal** aplica orden **XYZ**; seleccionar **Vertical sobre celular** aplica orden **YXZ**. Al cambiar de montaje se restablece Invertir X al valor activado.
+
+Validación manual: el usuario confirmó retorno correcto al centro con el control directo por cuaterniones en montaje vertical y orden YXZ.

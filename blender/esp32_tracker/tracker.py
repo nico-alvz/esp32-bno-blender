@@ -15,7 +15,7 @@ from collections import deque
 bl_info = {
     "name": "ESP32 IMU Tracker",
     "author": "nico-alvz",
-    "version": (1, 5, 1),
+    "version": (1, 5, 2),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar (N) > ESP32 Tab",
     "description": "Controla objetos 3D en tiempo real con ESP32 + BNO08x/055",
@@ -39,20 +39,20 @@ _invalid_packets = 0
 _connected_at = 0.0
 
 def invert_controls(q, settings):
-    """Invert relative XYZ Euler controls after mount conversion.
+    """Map relative rotation axes without Euler conversion or history.
 
-    This is an ordered control mapping, not a sensor coordinate transform.
-    Euler display/control axes have the usual singularity at Y = +/-90 deg.
+    A signed permutation of the quaternion vector is an orthogonal mapping
+    of its axis-angle vector. It preserves the rotation angle, identity and
+    Q/-Q equivalence. Odd permutations are a control convention (not a
+    change of right-handed coordinate basis).
     """
-    global _control_euler
-    angles = q.to_euler('XYZ', _control_euler) if _control_euler else q.to_euler('XYZ')
-    _control_euler = angles.copy()
-    if not (settings.invert_x or settings.invert_y or settings.invert_z):
-        return q.copy()
-    for i, enabled in enumerate((settings.invert_x, settings.invert_y, settings.invert_z)):
-        if enabled:
-            angles[i] = -angles[i]
-    return angles.to_quaternion()
+    source = (q.x, q.y, q.z)
+    signs = (settings.invert_x, settings.invert_y, settings.invert_z)
+    vector = [source['XYZ'.index(axis)] * (-1 if inverted else 1)
+              for axis, inverted in zip(settings.axis_mapping, signs)]
+    result = mathutils.Quaternion((q.w, *vector))
+    result.normalize()
+    return result
 
 def target_for(settings):
     return settings.target_object or bpy.data.objects.get("Cube") or bpy.context.view_layer.objects.active
@@ -97,6 +97,14 @@ def parse_packet(line):
     q.normalize()
     return q
 
+def apply_mount_defaults(settings, context):
+    # Apply once when selecting a preset; manual inversion remains editable.
+    settings.invert_x = True
+    if settings.mount == 'FLAT':
+        settings.axis_mapping = 'XYZ'
+    elif settings.mount == 'PHONE':
+        settings.axis_mapping = 'YXZ'
+
 class ESP32TrackerSettings(bpy.types.PropertyGroup):
     connection_type: bpy.props.EnumProperty(
         name="Tipo de Conexión",
@@ -123,14 +131,20 @@ class ESP32TrackerSettings(bpy.types.PropertyGroup):
         name="Lectura",
         default="Sin datos"
     )
-    invert_x: bpy.props.BoolProperty(name="Invertir X · Cabeceo", default=False)
+    axis_mapping: bpy.props.EnumProperty(
+        name="Asignación de ejes",
+        description="Orden de los controles de entrada que se envían a X, Y y Z del objeto",
+        items=[(order, order, 'Salida X ← ' + order[0] + ', Y ← ' + order[1] + ', Z ← ' + order[2])
+               for order in ('XYZ', 'XZY', 'YXZ', 'YZX', 'ZXY', 'ZYX')],
+        default='XYZ')
+    invert_x: bpy.props.BoolProperty(name="Invertir X · Cabeceo", default=True)
     invert_y: bpy.props.BoolProperty(name="Invertir Y · Inclinación lateral", default=False)
     invert_z: bpy.props.BoolProperty(name="Invertir Z · Giro", default=False)
     show_live: bpy.props.BoolProperty(name="Datos en vivo", default=True)
     mount: bpy.props.EnumProperty(name="Montaje", items=[
         ('FLAT', 'Horizontal', 'Frente del dispositivo: +Y del BNO; arriba: +Z'),
         ('PHONE', 'Vertical sobre celular', 'Detecta arriba al centrar; selecciona la cara del BNO hacia afuera'),
-        ('CUSTOM', 'Personalizado', 'Seleccionar los ejes físicos del sensor')], default='FLAT')
+        ('CUSTOM', 'Personalizado', 'Seleccionar los ejes físicos del sensor')], default='FLAT', update=apply_mount_defaults)
     phone_forward: bpy.props.EnumProperty(name="Cara hacia afuera", items=[
         ('-Z', '-Z del BNO', 'Normal negativa del sensor hacia el frente del celular'),
         ('Z', '+Z del BNO', 'Normal positiva del sensor hacia el frente del celular')], default='-Z')
@@ -352,7 +366,10 @@ class ESP32_PT_MainPanel(bpy.types.Panel):
         box_axes.label(text="Al cambiar montaje se toma un nuevo cero.")
 
         controls = layout.box()
-        controls.label(text="Invertir controles")
+        controls.label(text="Asignación e inversión")
+        controls.prop(settings, "axis_mapping", text="Orden")
+        for output, source in zip('XYZ', settings.axis_mapping):
+            controls.label(text=f"Salida {output} ← Entrada {source}")
         controls.prop(settings, "invert_x")
         controls.prop(settings, "invert_y")
         controls.prop(settings, "invert_z")
@@ -369,11 +386,18 @@ class ESP32_PT_MainPanel(bpy.types.Panel):
                 live.label(text="Esperando primer cuaternión")
             else:
                 live.label(text=f"Última lectura: {now - _last_sample_time:.2f} s")
+                if _reference is not None:
+                    delta = _reference.inverted() @ _last_sensor
+                    delta.normalize()
+                    angle = math.degrees(2 * math.acos(min(1.0, abs(delta.w))))
+                    live.label(text=f"Sensor respecto del cero: {angle:.2f}°")
                 live.label(text="Entrada BNO · cuaternión normalizado")
                 for axis, value in zip('WXYZ', _last_sensor):
                     live.label(text=f"{axis}: {value:+.5f}")
             if _output_quat is not None:
                 live.separator()
+                angle = math.degrees(2 * math.acos(min(1.0, abs(_output_quat.normalized().w))))
+                live.label(text=f"Salida respecto del cero: {angle:.2f}°")
                 live.label(text="Salida al objeto · grados XYZ")
                 for axis, value in zip('XYZ', _output_quat.to_euler('XYZ')):
                     live.label(text=f"{axis}: {math.degrees(value):+.1f}°")
