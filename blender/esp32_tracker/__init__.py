@@ -2,7 +2,7 @@
 bl_info = {
     "name": "ESP32 IMU Tracker",
     "author": "nico-alvz",
-    "version": (1, 5, 2),
+    "version": (1, 6, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar (N) > ESP32 Tab",
     "description": "Controla objetos 3D en tiempo real con ESP32 + BNO08x/055",

@@ -10,12 +10,14 @@ import mathutils
 import time
 import sys
 import math
+import textwrap
 from collections import deque
+from .ports import port_kind, resolve_port, compare_ports
 
 bl_info = {
     "name": "ESP32 IMU Tracker",
     "author": "nico-alvz",
-    "version": (1, 5, 2),
+    "version": (1, 6, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar (N) > ESP32 Tab",
     "description": "Controla objetos 3D en tiempo real con ESP32 + BNO08x/055",
@@ -37,6 +39,24 @@ _packet_times = deque(maxlen=2000)
 _valid_packets = 0
 _invalid_packets = 0
 _connected_at = 0.0
+_detected_ports = []
+_new_ports = []
+_removed_ports = []
+_scan_status = "Actualiza la lista para detectar puertos"
+_scan_done = False
+
+
+def scan_ports():
+    global _detected_ports, _new_ports, _removed_ports, _scan_status, _scan_done
+    ports = sorted(serial.tools.list_ports.comports())
+    before = [p.device for p in _detected_ports]
+    after = [p.device for p in ports]
+    _new_ports, _removed_ports = compare_ports(before, after) if _scan_done else ([], [])
+    _detected_ports = ports
+    _scan_status = f"{len(ports)} puertos detectados"
+    _scan_done = True
+    return ports
+
 
 def invert_controls(q, settings):
     """Map relative rotation axes without Euler conversion or history.
@@ -110,14 +130,15 @@ class ESP32TrackerSettings(bpy.types.PropertyGroup):
         name="Tipo de Conexión",
         items=[
             ("USB", "Cable USB (automático)", "Conexión por cable"),
-            ("BT", "Bluetooth (/dev/rfcomm0)", "Conexión inalámbrica Bluetooth SPP"),
+            ("BT", "Bluetooth SPP", "COM saliente en Windows; RFCOMM en Linux"),
             ("CUSTOM", "Personalizado", "Ingresar puerto manual")
         ],
         default="USB"
     )
     custom_port: bpy.props.StringProperty(
         name="Puerto Manual",
-        default="/dev/ttyUSB0"
+        description="Vacío: detección automática. Windows: COM5. Linux: /dev/ttyUSB0",
+        default=""
     )
     target_object: bpy.props.PointerProperty(
         name="Objeto 3D",
@@ -152,14 +173,52 @@ class ESP32TrackerSettings(bpy.types.PropertyGroup):
     sensor_up: bpy.props.EnumProperty(name="Arriba del BNO", items=[(a,a,a) for a in ('X','-X','Y','-Y','Z','-Z')], default='Y')
 
 def get_active_port(settings):
-    if settings.connection_type == "USB":
-        ports = list(serial.tools.list_ports.comports())
-        usb_ports = [p.device for p in ports if p.vid is not None]
-        return usb_ports[0] if usb_ports else ("COM3" if sys.platform == "win32" else "/dev/ttyUSB0")
-    elif settings.connection_type == "BT":
-        return "/dev/rfcomm0"
-    else:
-        return settings.custom_port.strip()
+    ports = scan_ports()
+    return resolve_port(settings.connection_type, settings.custom_port, ports, sys.platform)
+
+
+class ESP32_OT_RefreshPorts(bpy.types.Operator):
+    bl_idname = "esp32.refresh_ports"
+    bl_label = "Actualizar puertos"
+
+    def execute(self, context):
+        global _scan_status
+        try:
+            scan_ports()
+        except (OSError, serial.SerialException) as exc:
+            _scan_status = f"No se pudo enumerar: {exc}"
+            self.report({'ERROR'}, _scan_status)
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
+class ESP32_OT_SelectPort(bpy.types.Operator):
+    bl_idname = "esp32.select_port"
+    bl_label = "Seleccionar puerto"
+    device: bpy.props.StringProperty()
+    transport: bpy.props.StringProperty()
+
+    def execute(self, context):
+        settings = context.scene.esp32_tracker
+        if settings.is_running:
+            self.report({'WARNING'}, "Desconecta antes de cambiar de puerto")
+            return {'CANCELLED'}
+        settings.custom_port = self.device
+        settings.connection_type = self.transport
+        settings.last_reading = f"Seleccionado {self.device}; pulsa Conectar"
+        return {'FINISHED'}
+
+
+class ESP32_OT_AutoPort(bpy.types.Operator):
+    bl_idname = "esp32.auto_port"
+    bl_label = "Usar detección automática"
+
+    def execute(self, context):
+        if context.scene.esp32_tracker.is_running:
+            return {'CANCELLED'}
+        context.scene.esp32_tracker.custom_port = ""
+        return {'FINISHED'}
+
 
 def update_tracker_timer():
     global _last_sensor, _last_sample_time, _reference, _rx_buffer, _config
@@ -211,7 +270,10 @@ def update_tracker_timer():
                 target.rotation_quaternion = result
             settings.last_reading = "Recibiendo orientación"
         if time.monotonic() - _last_sample_time > 1.0:
-            settings.last_reading = "Sin datos recientes del sensor"
+            if settings.connection_type == 'BT' and not _valid_packets and time.monotonic() - _connected_at > 5.0:
+                settings.last_reading = "Sin datos Bluetooth. Comprueba el COM saliente y que la ESP32 esté encendida."
+            else:
+                settings.last_reading = "Sin datos recientes del sensor"
         for win in bpy.context.window_manager.windows:
             for area in win.screen.areas:
                 if area.type == 'VIEW_3D':
@@ -237,9 +299,10 @@ class ESP32_OT_StartTracker(bpy.types.Operator):
         if _timer_active:
             return {'FINISHED'}
 
-        port = get_active_port(settings)
+        port = settings.custom_port.strip() or "automático"
 
         try:
+            port = get_active_port(settings)
             _rx_buffer = ""
             _last_sensor = _reference = _config = None
             _last_sample_time = 0.0
@@ -252,10 +315,16 @@ class ESP32_OT_StartTracker(bpy.types.Operator):
             _serial_conn.port = port
             _serial_conn.baudrate = 115200
             _serial_conn.timeout = 0
+            # Bluetooth virtual COM must not receive the USB reset sequence.
+            _serial_conn.dtr = False
+            _serial_conn.rts = False
             _serial_conn.open()
 
             # Si es por cable USB, dar pulso RTS para reiniciar limpiamente
-            if settings.connection_type == "USB" or "usb" in port.lower() or "acm" in port.lower():
+            info = next((p for p in _detected_ports if p.device.casefold() == port.casefold()), None)
+            usb = settings.connection_type == 'USB' or (info is not None and port_kind(info) == 'USB')
+            bluetooth = settings.connection_type == 'BT' or (info is not None and port_kind(info) == 'BT')
+            if usb and not bluetooth:
                 _serial_conn.setDTR(False)
                 _serial_conn.setRTS(True)
                 time.sleep(0.1)
@@ -272,7 +341,22 @@ class ESP32_OT_StartTracker(bpy.types.Operator):
             print(f"[ESP32 Tracker] Conectado exitosamente a {port}")
             return {'FINISHED'}
         except Exception as e:
-            self.report({'ERROR'}, f"Error abriendo {port}: {e}")
+            _timer_active = False
+            settings.is_running = False
+            if _serial_conn is not None:
+                try:
+                    _serial_conn.close()
+                except (OSError, serial.SerialException):
+                    pass
+                _serial_conn = None
+            if isinstance(e, ValueError):
+                message = str(e)
+            elif isinstance(e, PermissionError) or 'access is denied' in str(e).lower() or 'acceso denegado' in str(e).lower():
+                message = f"{port}: ocupado o acceso denegado. Cierra monitores serie u otras conexiones y verifica el COM saliente."
+            else:
+                message = f"No se pudo abrir {port}. Actualiza puertos y revisa conexión/controlador. {e}"
+            settings.last_reading = message
+            self.report({'ERROR'}, message)
             return {'CANCELLED'}
 
 class ESP32_OT_StopTracker(bpy.types.Operator):
@@ -333,12 +417,36 @@ class ESP32_PT_MainPanel(bpy.types.Panel):
 
         col = layout.column(align=True)
         col.prop(settings, "connection_type", text="Modo")
-        if settings.connection_type == "CUSTOM":
-            col.prop(settings, "custom_port", text="Puerto")
+        port_controls = col.column(align=True)
+        port_controls.enabled = not settings.is_running
+        port_controls.prop(settings, "custom_port", text="Puerto")
+        port_controls.label(text="Vacío = automático")
+        port_controls.operator("esp32.auto_port", text="Usar automático")
+        ports_box = layout.box()
+        ports_box.label(text="Puertos detectados")
+        ports_box.operator("esp32.refresh_ports", icon='FILE_REFRESH')
+        ports_box.label(text=_scan_status)
+        choices = ports_box.column(align=True)
+        choices.enabled = not settings.is_running
+        for port in _detected_ports:
+            kind = port_kind(port)
+            label = {'USB': 'USB', 'BT': 'Bluetooth', 'CUSTOM': 'Serie'}[kind]
+            prefix = "Nuevo · " if port.device in _new_ports else ""
+            button = choices.operator("esp32.select_port", text=f"{prefix}{port.device} · {label}")
+            button.device = port.device
+            button.transport = kind
+            choices.label(text=(port.description or 'Sin descripción')[:32])
+        for device in _removed_ports:
+            ports_box.label(text=f"Retirado: {device}", icon='INFO')
+        if sys.platform == 'win32' and settings.connection_type == 'BT':
+            ports_box.label(text="Usa el COM saliente de ESP32_Tracker")
         col.prop(settings, "target_object", text="Objeto 3D")
 
         box = layout.box()
-        box.label(text=f"Estado: {settings.last_reading}", icon='INFO')
+        for line in textwrap.wrap(f"Estado: {settings.last_reading}", width=36):
+            box.label(text=line)
+        if _serial_conn and _serial_conn.is_open:
+            box.label(text=f"Puerto conectado: {_serial_conn.port}")
 
         layout.separator()
 
@@ -413,6 +521,9 @@ class ESP32_PT_MainPanel(bpy.types.Panel):
 
 classes = (
     ESP32TrackerSettings,
+    ESP32_OT_RefreshPorts,
+    ESP32_OT_SelectPort,
+    ESP32_OT_AutoPort,
     ESP32_OT_StartTracker,
     ESP32_OT_StopTracker,
     ESP32_OT_TareTracker,
@@ -420,6 +531,11 @@ classes = (
 )
 
 def register():
+    global _scan_status
+    try:
+        scan_ports()
+    except (OSError, serial.SerialException) as exc:
+        _scan_status = f"No se pudo enumerar: {exc}"
     for c in classes:
         bpy.utils.register_class(c)
     bpy.types.Scene.esp32_tracker = bpy.props.PointerProperty(type=ESP32TrackerSettings)

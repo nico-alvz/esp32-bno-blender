@@ -1,4 +1,4 @@
-# ESP32 + BNO → Blender · 1.5.1 beta
+# ESP32 + BNO → Blender
 
 Control de orientación de objetos en Blender con ESP32 clásico y BNO055/BNO08x por USB o Bluetooth SPP. Interfaz en español.
 
@@ -14,15 +14,13 @@ ESP32 DevKit V1 clásico (S2/S3/C3 no soportan el SPP requerido). Conectar GND c
 
 ## Instalar en Blender · Linux y Windows
 
-1. Descargar **ESP32-Tracker-Blender-1.5.1-beta.1.zip** de Releases. **No descomprimirlo.**
-2. Blender → Editar → Preferencias → Complementos → menú ▾ → **Instalar desde disco**. Elegir ese ZIP y activar **ESP32 IMU Tracker**.
-3. Volver a la vista 3D → tecla **N** → pestaña **ESP32**. Elegir objeto y pulsar **Conectar / Iniciar**.
+**Windows:** usa la release dedicada **v1.6.0-windows-beta.1** y el archivo **ESP32-Tracker-Windows-1.6.0-beta.1.zip**. [Guía Windows paso a paso](docs/WINDOWS.md): detección y selección de COM, comparación de puertos nuevos/retirados y Bluetooth SPP con COM saliente.
 
-Incluye pyserial y su licencia: no requiere pip, terminal ni instalar Python. El firmware se descarga por separado y solo se graba cuando sea necesario.
+**Linux:** conserva su release separada **v1.5.1-beta.1** y su ZIP **ESP32-Tracker-Blender-1.5.1-beta.1.zip**. USB usa `/dev/ttyUSB0` o `/dev/ttyACM0`; Bluetooth necesita el puerto RFCOMM previamente enlazado.
 
-USB automático elige el primer adaptador USB serie. Si hay varios, elegir Personalizado. En Windows consultar el Administrador de dispositivos e introducir por ejemplo `COM3`; en Linux, `/dev/ttyUSB0` o `/dev/ttyACM0`. El controlador CP210x/CH340 de la placa y los permisos del puerto siguen siendo requisitos del sistema operativo.
+En ambos casos instala el ZIP sin descomprimir desde **Blender → Editar → Preferencias → Complementos → Instalar desde disco**, actívalo y abre **N → ESP32**. Incluye pyserial y su licencia: no requiere pip, terminal ni instalar Python. El firmware es una descarga separada.
 
-Bluetooth: emparejar `ESP32_Tracker` y usar el COM saliente en Windows o RFCOMM en Linux. Requiere SPP clásico; BLE no funciona.
+La nueva enumeración usa los puertos que informa el sistema. Detecta automáticamente cuando hay un solo candidato del transporte elegido; con varios exige seleccionar. **Actualizar puertos** compara con el escaneo anterior y muestra altas/bajas. No abre todos los COM ni garantiza que estén libres. El intento de conexión al puerto elegido informa si está ocupado o hay acceso denegado. Para reconstruir el ZIP de Windows: `python tools/package_windows.py`.
 
 ## Montaje y calibración
 
